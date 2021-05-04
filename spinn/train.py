@@ -7,7 +7,7 @@ from torch import optim
 from torch import nn
 
 from torchtext import data
-from torchtext import datasets
+from torchnlp import datasets
 
 from model import SNLIClassifier
 from util import get_args
