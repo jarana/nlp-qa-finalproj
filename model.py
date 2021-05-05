@@ -7,6 +7,7 @@ Author:
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+#from spinn.spinn import SPINN
 
 from utils import cuda, load_cached_embeddings
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
@@ -177,9 +178,11 @@ class BaselineReader(nn.Module):
 
         # Initialize Context2Query (2)
         self.aligned_att = AlignedAttention(args.embedding_dim)
+        
 
         rnn_cell = nn.LSTM if args.rnn_cell_type == 'lstm' else nn.GRU
 
+        
         # Initialize passage encoder (3)
         self.passage_rnn = rnn_cell(
             args.embedding_dim * 2,
@@ -369,7 +372,7 @@ class SPINNReader(nn.Module):
 
         rnn_cell = nn.LSTM if args.rnn_cell_type == 'lstm' else nn.GRU
 
-        # Initialize passage encoder (3)
+        # TODO change to spinn - Initialize passage encoder (3)
         self.passage_rnn = rnn_cell(
             args.embedding_dim * 2,
             args.hidden_dim,
@@ -377,13 +380,16 @@ class SPINNReader(nn.Module):
             batch_first=True,
         )
 
-        # Initialize question encoder (4)
+        
+        # TODO change to spinn - Initialize question encoder (4)
         self.question_rnn = rnn_cell(
             args.embedding_dim,
             args.hidden_dim,
             bidirectional=args.bidirectional,
             batch_first=True,
         )
+
+        #self.encoder = SPINN(args)
 
         self.dropout = nn.Dropout(self.args.dropout)
 
@@ -483,13 +489,13 @@ class SPINNReader(nn.Module):
             torch.cat((passage_embeddings, aligned_embeddings), 2),
         )  # [batch_size, p_len, p_dim + q_dim]
 
-        # 3) Passage Encoder
+        # 3) Passage Encoder # TODO replace with spinn
         passage_hidden = self.sorted_rnn(
             passage_embeddings, passage_lengths, self.passage_rnn
         )  # [batch_size, p_len, p_hid]
         passage_hidden = self.dropout(passage_hidden)  # [batch_size, p_len, p_hid]
 
-        # 4) Question Encoder: Encode question embeddings.
+        # 4) Question Encoder: Encode question embeddings. # TODO replace with spinn
         question_hidden = self.sorted_rnn(
             question_embeddings, question_lengths, self.question_rnn
         )  # [batch_size, q_len, q_hid]
@@ -511,3 +517,53 @@ class SPINNReader(nn.Module):
         )  # [batch_size, p_len]
 
         return start_logits, end_logits  # [batch_size, p_len], [batch_size, p_len]
+
+'''
+class SNLIClassifier(nn.Module):
+
+    def __init__(self, config):
+        super(SNLIClassifier, self).__init__()
+        self.config = config
+        self.embed = nn.Embedding(config.n_embed, config.d_embed)
+        self.projection = Linear(config.d_embed, config.d_proj)
+        self.embed_bn = BatchNorm(config.d_proj)
+        self.embed_dropout = nn.Dropout(p=config.embed_dropout)
+        self.encoder = SPINN(config)
+        feat_in_size = config.d_hidden * (
+            2 if self.config.birnn and not self.config.spinn else 1)
+        self.feature = Feature(feat_in_size, config.mlp_dropout)
+        self.mlp_dropout = nn.Dropout(p=config.mlp_dropout)
+        self.relu = nn.ReLU()
+        mlp_in_size = 4 * feat_in_size
+        mlp = [nn.Linear(mlp_in_size, config.d_mlp), self.relu,
+               nn.BatchNorm1d(config.d_mlp), self.mlp_dropout]
+        for i in range(config.n_mlp_layers - 1):
+            mlp.extend([nn.Linear(config.d_mlp, config.d_mlp), self.relu,
+                        nn.BatchNorm1d(config.d_mlp), self.mlp_dropout])
+        mlp.append(nn.Linear(config.d_mlp, config.d_out))
+        self.out = nn.Sequential(*mlp)
+
+    def forward(self, batch):
+        # import pdb
+        # pdb.set_trace()
+        prem_embed = self.embed(batch.premise)
+        hypo_embed = self.embed(batch.hypothesis)
+        if self.config.fix_emb:
+            prem_embed = Variable(prem_embed.data)
+            hypo_embed = Variable(hypo_embed.data)
+        if self.config.projection:
+            prem_embed = self.projection(prem_embed)  # no relu
+            hypo_embed = self.projection(hypo_embed)
+        prem_embed = self.embed_dropout(self.embed_bn(prem_embed))
+        hypo_embed = self.embed_dropout(self.embed_bn(hypo_embed))
+        if hasattr(batch, 'premise_transitions'):
+            prem_trans = batch.premise_transitions
+            hypo_trans = batch.hypothesis_transitions
+        else:
+            prem_trans = hypo_trans = None
+        premise = self.encoder(prem_embed, prem_trans)
+        hypothesis = self.encoder(hypo_embed, hypo_trans)
+        scores = self.out(self.feature(premise, hypothesis))
+        #print(premise[0][:5], hypothesis[0][:5])
+        return scores
+'''

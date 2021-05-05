@@ -12,6 +12,8 @@ from torch.utils.data import Dataset
 from random import shuffle
 from utils import cuda, load_dataset
 
+from stanza.server import CoreNLPClient
+from nltk.tree import *
 
 PAD_TOKEN = '[PAD]'
 UNK_TOKEN = '[UNK]'
@@ -145,6 +147,7 @@ class QADataset(Dataset):
         self.batch_size = args.batch_size if 'batch_size' in args else 1
         self.pad_token_id = self.tokenizer.pad_token_id \
             if self.tokenizer is not None else 0
+        self.client =  CoreNLPClient(annotators=['parse'], timeout=30000, memory='16G')
 
     def _create_samples(self):
         """
@@ -180,6 +183,28 @@ class QADataset(Dataset):
                 
         return samples
 
+    def cnlp_to_nltk_tree(self, t):
+        return Tree("", [self.cnlp_to_nltk_tree(c) for c in t.child]) if t.child else t.value
+
+    def prepare_tree(self, t):
+        tree = self.cnlp_to_nltk_tree(t)
+        tree.pprint()
+        #re.sub("\s\s+", " ", raw)
+        return " ".join(str(tree).replace(")", " )").split()).replace("(","").split()
+
+    def _generate_txs(self, cxt):
+        ann = self.client.annotate(" ".join(cxt))
+        tree = self.prepare_tree(ann.sentence[0].parseTree)# TODO iterate over
+        txs = []
+        last = ""
+        for item in tree:
+            if item == ")" and last != ")":
+                txs.append(1)
+            elif item != ")":
+                txs.append(0)
+            last = item
+        return txs
+    
     def _create_data_generator(self, shuffle_examples=False):
         """
         Converts preprocessed text data to Torch tensors and returns a
@@ -201,12 +226,15 @@ class QADataset(Dataset):
 
         passages = []
         questions = []
+        passage_txs = []
+        question_txs = []
         start_positions = []
         end_positions = []
         for idx in example_idxs:
             # Unpack QA sample and tokenize passage/question.
             qid, passage, question, answer_start, answer_end = self.samples[idx]
-
+            passage_txs.append(self._generate_txs(passage))
+            question_txs.append(self._generate_txs(question))
             # Convert words to tensor.
             passage_ids = torch.tensor(
                 self.tokenizer.convert_tokens_to_ids(passage)

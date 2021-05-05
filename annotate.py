@@ -4,10 +4,14 @@ Author:
     Shrey Desai and Yasumasa Onoe
 """
 
+from collections import Counter
 import argparse
 import random
 import textwrap
 import stanza
+from stanza.server import CoreNLPClient
+from nltk.tree import *
+
 
 from termcolor import colored
 
@@ -80,6 +84,72 @@ def _color_context(context, answer_start, answer_end):
 
     return '\n'.join(lines)
 
+def _generate_txs(annots):
+    transitions = []
+    
+    for sent in annots.sentences[:2]:
+        print(sent.parseTree)
+        stack = []
+        dumb = []
+        left = True
+        cts = Counter([w.head for w in sent.words])# help ensure to only start reducing once last child reached
+        for word in sent.words:
+            stack.append(word.head)
+            dumb.append(0)# always shift first ? TODO double check
+            print(f'shifting {word.head} on to stack')
+            if stack[-1] == 0:
+                left = False
+            elif len(stack) > 1 and (stack[-2] > 0):
+                if left and (stack[-2] < stack[-1] or stack[-1] < word.id) or (not left and stack[-2] > stack[-1]):
+                    print(f'reducing {stack[-2]} & {stack[-1]}')
+                    print(f'old stack: {stack}')
+                    curr = stack.pop()
+                    stack[-1] = curr
+                    print(f'new stack: {stack}')
+                    dumb.append(1)
+
+                while len(stack) > 1 and stack[-2] == stack[-1]:
+                    print(f'reducing {stack[-2]} & {stack[-1]}')
+                    print(f'old stack: {stack}')
+                    stack.pop()
+                    print(f'new stack: {stack}')
+                    dumb.append(1)
+        # at this point the stack should have left, root, right
+        while len(stack) > 1:
+            print(f'final reducing {stack[-2]} & {stack[-1]}')
+            print(f'old stack: {stack}')
+            stack.pop()
+            print(f'new stack: {stack}')
+            dumb.append(1)
+        print([w.text for w in sent.words])
+        print([w.id for w in sent.words])
+        print([w.head for w in sent.words])
+        ind = 0
+        for w in sent.words:
+            print(f'id: {w.id} - text: {w.text} - head: {w.head}')
+        txs = ['SHIFT', 'REDUCE']
+        print([txs[t] for t in dumb])
+        transitions.extend(dumb)
+
+def cnlp_to_nltk_tree(t):
+    return Tree("", [cnlp_to_nltk_tree(c) for c in t.child]) if t.child else t.value
+
+def prepare_tree(t):
+    tree = cnlp_to_nltk_tree(t)
+    tree.pprint()
+    #re.sub("\s\s+", " ", raw)
+    return " ".join(str(tree).replace(")", " )").split()).replace("(","").split()
+
+def generate_transitions(flat_tree):
+    txs = []
+    last = ""
+    for item in flat_tree:
+        if item == ")" and last != ")":
+            txs.append(1)
+        elif item != ")":
+            txs.append(0)
+        last = item
+    return txs
 
 def main(args):
     """Visualization of contexts, questions, and colored answer spans."""
@@ -97,24 +167,21 @@ def main(args):
     print()
 
     # Visualize samples.
-    for (qid, context, question, answer_start, answer_end) in vis_samples[:10]:
-      cxt = _build_string(context)
-      print(cxt)
-      stanza.download('en') 
-      en_nlp = stanza.Pipeline('en')
-      en_doc = en_nlp(cxt)
+    for (qid, context, question, answer_start, answer_end) in vis_samples:
+        cxt = _build_string(context)
+        print(cxt)
+        #stanza.download('en')
+        #en_nlp = stanza.Pipeline('en')
+        #en_doc = en_nlp(cxt)
+        with CoreNLPClient(annotators=['parse'], timeout=30000, memory='16G') as client:
+            ann = client.annotate(cxt)
+        print([tok.word for tok in ann.sentence[0].token])
+        tree = prepare_tree(ann.sentence[0].parseTree)
+        print(tree)
+        txs = generate_transitions(tree)
+        print(txs)
 
-      for i, sent in enumerate(en_doc.sentences):
-        print(f"[Sentence {i+1}")
-        for word in sent.words:
-          print("{:12s}\t{:12s}\t{:6s}\t{:d}\t{:12s}".format(word.text, word.lemma, word.pos, word.head, word.deprel))
-          print("")
-
-      print("Mention text\tType\tStart-End")
-      for ent in en_doc.ents:
-        print("{}\t{}\t{}-{}".format(ent.text, ent.type, ent.start_char, ent.end_char))
-    
-
+        
 
 if __name__ == '__main__':
     main(parser.parse_args())

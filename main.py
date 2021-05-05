@@ -464,6 +464,10 @@ def main(args):
     train_dataset = QADataset(args, args.train_path)
     dev_dataset = QADataset(args, args.dev_path)
 
+    # TODO compute transitions here - add to batch object like
+    # batch['passages'] like batch['passage_trans'] (0 = shift, 1 = reduce)
+    # may want to reuse 'MakeTrainingIterator' and 'PreprocessDataset'jkjk
+
     # Create vocabulary and tokenizer.
     vocabulary = Vocabulary(train_dataset.samples, args.vocab_size)
     tokenizer = Tokenizer(vocabulary)
